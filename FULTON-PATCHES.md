@@ -15,9 +15,12 @@ unblock exactly that, and are written to be **upstream-PR candidates**.
 - Maintained branch: **`fulton/patches`**, based on the upstream tag the fleet pins
   (`COMFYUI_REF` in `agents/fulton-comfyui/images/runtime/Dockerfile`).
 - Every core bump = `git rebase fulton/patches` onto the new upstream tag, then rebuild.
-  The image build asserts the fork branch still contains `COMFYUI_REF`
-  (`git merge-base --is-ancestor`), so a mis-rebased fork fails the build instead of
-  silently shipping a different core.
+  The image build does NOT check ancestry: the fork is cloned `--depth 1` by exact
+  commit (`COMFYUI_PATCH_REF`), where no ancestry graph exists. Instead the build
+  asserts **identity** (`git rev-parse HEAD` == `COMFYUI_PATCH_REF`), so a moved or
+  mistyped ref fails the build rather than shipping a different core. Re-verify the
+  fork branch's ancestry of the new `COMFYUI_REF` in the fork checkout at bump time
+  (see `agents/fulton-comfyui/DEPLOYMENT.md`, "Build").
 - Current base: upstream **v0.40.0**, commit `3541246a9c997f4b8c32f9f88f3c985d02021c79`.
 
 ## Root cause → patch map
