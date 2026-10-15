@@ -47,6 +47,7 @@ def upgrade() -> None:
     op.create_index(
         "uq_asset_contents_path_live", "asset_contents", ["path"], unique=True,
         sqlite_where=sa.text("is_missing = 0"),
+        postgresql_where=sa.text("is_missing = false"),
     )
     op.create_table(
         "assets",
