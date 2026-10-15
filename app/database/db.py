@@ -232,15 +232,41 @@ def _is_memory_db(db_url):
     return db_url in ("sqlite:///:memory:", "sqlite://")
 
 
+def classify_db_url(db_url):
+    """Classify a database URL as "memory", "file", "server", or None (unsupported).
+
+    The single source of truth for which URLs the assets system accepts, shared by
+    init_db() and the startup failure message so the two cannot disagree. Only the
+    three-slash SQLite file form ("sqlite:///path") is file-backed; a SQLite URL
+    carrying a host ("sqlite://user@host/x.db") is not a valid file URL and is
+    rejected, as before. Server backends are everything SQLAlchemy resolves to
+    postgresql.
+    """
+    if _is_memory_db(db_url):
+        return "memory"
+    if db_url.startswith("sqlite:///"):
+        return "file"
+    try:
+        backend = make_url(db_url).get_backend_name()
+    except Exception:
+        return None
+    if backend == "postgresql":
+        return "server"
+    return None
+
+
 def init_db():
     db_url = get_database_url()
 
-    if _is_memory_db(db_url):
+    kind = classify_db_url(db_url)
+    if kind == "memory":
         _init_memory_db(db_url)
-    elif db_url.startswith("sqlite:///"):
+    elif kind == "file":
         _init_file_db(db_url)
-    else:
+    elif kind == "server":
         _init_server_db(db_url)
+    else:
+        raise ValueError(f"Unsupported database URL '{db_url}'.")
 
 
 def _init_memory_db(db_url):

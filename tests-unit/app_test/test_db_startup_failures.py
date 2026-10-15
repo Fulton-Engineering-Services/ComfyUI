@@ -213,14 +213,15 @@ def test_failure_after_the_database_opened_doesnt_suggest_deleting_it(db_path, c
 
 
 @pytest.mark.parametrize(
-    "url", ["postgresql://user:secret@localhost/comfy", "sqlite:relative.db", "sqlite://user:secret@host/x.db"]
+    "url", ["sqlite:relative.db", "sqlite://user:secret@host/x.db", "mysql://user:secret@host/x"]
 )
 def test_database_url_that_is_not_sqlite_file_url(monkeypatch, db_path, caplog, url):
     monkeypatch.setattr(db_module.args, "database_url", url)
 
     error = _startup_error(caplog, kind="unsupported_url", level=logging.DEBUG)
 
-    assert "--database-url must start with sqlite:///, like sqlite:///path/to/comfyui.db" in error
+    assert "--database-url must be a sqlite:// URL, like sqlite:///path/to/comfyui.db" in error
+    assert "or a postgresql:// URL" in error
     assert "or be left out to use the default database" in error
     assert url not in error
     assert "secret" not in caplog.text
