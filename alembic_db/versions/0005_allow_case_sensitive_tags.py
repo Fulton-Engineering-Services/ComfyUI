@@ -36,7 +36,10 @@ def upgrade() -> None:
             op.execute("PRAGMA foreign_keys=ON")
         return
 
-    op.drop_constraint("ck_tags_ck_tags_lowercase", "tags", type_="check")
+    # op.f() marks the name as already final: without it Alembic re-applies the
+    # ck_%(table_name)s_%(constraint_name)s naming convention and looks for
+    # "ck_tags_ck_tags_ck_tags_lowercase", which does not exist.
+    op.drop_constraint(op.f("ck_tags_ck_tags_lowercase"), "tags", type_="check")
 
 
 def downgrade() -> None:
@@ -103,5 +106,5 @@ def downgrade() -> None:
         return
 
     op.create_check_constraint(
-        "ck_tags_ck_tags_lowercase", "tags", "name = lower(name)"
+        op.f("ck_tags_ck_tags_lowercase"), "tags", "name = lower(name)"
     )

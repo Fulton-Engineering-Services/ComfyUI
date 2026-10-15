@@ -161,11 +161,14 @@ def _discard_unreferenced_content(session: Session, content_id: str) -> None:
     """Remove a content row left orphaned by a failed registration.
 
     ``create_content`` inserts inside a SAVEPOINT (``begin_nested``); under
-    pysqlite that insert survives the enclosing ``rollback`` because pysqlite
-    has no real nested transaction. When the follow-on ``create_record`` fails
-    we would otherwise leak an unreferenced content row, so delete it explicitly
-    once we have confirmed no record points at it. Best-effort: cleanup errors
-    are logged and swallowed so the original failure is what surfaces.
+    pysqlite that insert can survive the enclosing ``rollback`` because pysqlite
+    has no real nested transaction, leaking an unreferenced content row. On a
+    server database (PostgreSQL) ``begin_nested`` is a real SAVEPOINT, so the
+    row rolls back with the enclosing transaction and no leak occurs. This
+    cleanup is therefore only strictly needed for SQLite, but is harmless on
+    either: delete the row once we have confirmed no record points at it.
+    Best-effort: cleanup errors are logged and swallowed so the original
+    failure is what surfaces.
     """
     try:
         ref_count = session.scalar(
