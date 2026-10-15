@@ -54,6 +54,30 @@ generalizable. The `0005` (`op.f`), `0007` (`postgresql_where`) and `0009`
 (`julianday`) fixes are genuine upstream bugs that affect any non-SQLite backend, and
 are the cleanest standalone PRs.
 
+## Tests
+
+- `tests-unit/app_test/test_server_backend_urls.py` — torch-free unit tests for
+  `classify_db_url()`, `get_db_path()` and the lock-holder behaviour across URL forms.
+  Run everywhere; no database needed.
+- `tests-unit/test_postgres_backend.py` — integration tests against a real PostgreSQL
+  (skipped unless `ASSETS_TEST_POSTGRES_URL` is set): migrations to head, round-trip,
+  the partial unique index predicate, live-vs-retired path semantics, and four
+  processes migrating + writing concurrently from a cold schema.
+- `tests-unit/app_test/test_db_startup_failures.py` — updated the URL-gate case: the
+  malformed-sqlite/mysql URLs still assert rejection (with password masking); the
+  postgres URL is no longer rejected and was moved out.
+
+```sh
+# unit (no database needed)
+python -m pytest tests-unit/app_test/test_server_backend_urls.py -q
+
+# integration against a throwaway Postgres
+docker run -d --rm --name pgtest -e POSTGRES_PASSWORD=t -p 55432:5432 postgres:17
+ASSETS_TEST_POSTGRES_URL='postgresql+psycopg://postgres:t@127.0.0.1:55432/postgres' \
+  python -m pytest tests-unit/test_postgres_backend.py -q
+docker rm -f pgtest
+```
+
 ## Build / test
 
 The fork is consumed by `agents/fulton-comfyui` (image build clones this branch). To
