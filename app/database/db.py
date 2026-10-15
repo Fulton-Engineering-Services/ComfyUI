@@ -1,3 +1,4 @@
+import contextlib
 import importlib
 import logging
 import os
@@ -353,8 +354,14 @@ def _init_server_db(db_url):
                 )
     finally:
         if locked:
-            conn.exec_driver_sql("SELECT pg_advisory_unlock(%s)", (_MIGRATION_ADVISORY_LOCK_KEY,))
-        conn.close()
+            # Best-effort: if the connection already died, the server released the
+            # session lock on its own and the unlock would only mask the real error.
+            try:
+                conn.exec_driver_sql("SELECT pg_advisory_unlock(%s)", (_MIGRATION_ADVISORY_LOCK_KEY,))
+            except Exception:
+                logging.debug("Could not release the migration advisory lock", exc_info=True)
+        with contextlib.suppress(Exception):
+            conn.close()
 
     global Session, WriteSession
     Session = sessionmaker(bind=engine)

@@ -9,7 +9,7 @@ Locally, start a throwaway server and point the tests at it:
 
     docker run -d --rm --name pgtest -e POSTGRES_PASSWORD=t -p 55432:5432 postgres:17
     ASSETS_TEST_POSTGRES_URL=postgresql+psycopg://postgres:t@127.0.0.1:55432/postgres \\
-        python -m pytest tests-unit/assets_test/test_postgres_backend.py -q
+        python -m pytest tests-unit/test_postgres_backend.py -q
     docker rm -f pgtest
 
 They are skipped (not failed) when no DSN is configured or the psycopg driver is absent,
@@ -24,7 +24,8 @@ from pathlib import Path
 
 import pytest
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
+# This file sits directly in tests-unit/, so the repo root is one level up.
+REPO_ROOT = Path(__file__).resolve().parents[1]
 
 pytest.importorskip("sqlalchemy")
 psycopg = pytest.importorskip("psycopg", reason="postgresql driver (psycopg) not installed")
