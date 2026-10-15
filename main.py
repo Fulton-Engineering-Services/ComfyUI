@@ -509,10 +509,23 @@ def stop_startup(kind, message):
 
 def database_failure_message(error, db_url):
     """The kind of failure that stopped the asset database from opening, and how to fix it."""
-    if not (db_url.startswith("sqlite:///") or db_url == "sqlite://"):
-        return "unsupported_url", ("--database-url must start with sqlite:///, like sqlite:///path/to/comfyui.db, "
+    from sqlalchemy.engine import make_url
+    parsed = make_url(db_url) if db_url else None
+    supported = parsed is not None and (
+        parsed.get_backend_name() == "sqlite"
+        or parsed.get_backend_name() == "postgresql"
+    )
+    if not supported:
+        return "unsupported_url", ("--database-url must be a sqlite:// URL, like "
+                                   "sqlite:///path/to/comfyui.db, or a postgresql:// URL, "
                                    f"or be left out to use the default database.\n{WITHOUT_ASSETS}")
-    location = get_db_path() if db_url.startswith("sqlite:///") else db_url
+    # For a file-backed SQLite database the path is the useful location. For a
+    # server URL, hiding the credentials matters more than showing the exact
+    # host, so describe the backend instead of echoing the URL.
+    if parsed.get_backend_name() == "sqlite":
+        location = get_db_path() or db_url
+    else:
+        location = f"{parsed.get_backend_name()} database at {parsed.host}:{parsed.port}/{parsed.database}"
     kind = error_kind(error)
     detail = getattr(error, "orig", None) or error
     if "Could not acquire lock on database" in str(error):
