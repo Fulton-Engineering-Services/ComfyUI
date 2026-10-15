@@ -24,7 +24,7 @@ try:
     from alembic.script import ScriptDirectory
     from sqlalchemy import create_engine, event
     from sqlalchemy.engine import URL, make_url
-    from sqlalchemy.exc import OperationalError
+    from sqlalchemy.exc import ArgumentError, OperationalError
     from sqlalchemy.orm import sessionmaker
     from sqlalchemy.pool import StaticPool
 
@@ -208,7 +208,10 @@ def lock_holder_db_path():
     """
     try:
         db_path = get_db_path()
-    except ValueError:
+    except (ValueError, ArgumentError):
+        # A malformed URL (e.g. "sqlite:relative.db") makes make_url raise
+        # ArgumentError, and an unsupported one raises ValueError. This probe is
+        # advisory and runs even when assets are off, so neither may escape.
         return None
     if db_path is None:
         # Server-backed database: there is no file and no lock file.
