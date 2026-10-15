@@ -257,6 +257,22 @@ def test_no_second_database_suggested_for_a_broken_one(tmp_path, monkeypatch, db
     assert "comfyui-2.db" not in error
 
 
+def test_unreachable_server_database_does_not_advise_deleting_it(monkeypatch, caplog):
+    # A PostgreSQL URL pointing at a closed port: the failure must be reported as a
+    # connectivity problem, never as a damaged-local-file "delete it" case, and the
+    # message must not echo the URL (which carries the password).
+    url = "postgresql+psycopg://user:secret@127.0.0.1:59999/comfy"
+    monkeypatch.setattr(db_module.args, "database_url", url)
+
+    error = _startup_error(caplog, kind="server_unreachable")
+
+    assert "can't reach the asset database" in error
+    assert "Check that the database server is running and reachable" in error
+    assert "delete it" not in error
+    assert "secret" not in error
+    assert url not in error
+
+
 def test_opens_from_an_install_folder_with_a_percent_sign(tmp_path, monkeypatch, db_path):
     # Alembic config values go through ConfigParser interpolation, where % is special.
     root = tmp_path / "100% tmp"

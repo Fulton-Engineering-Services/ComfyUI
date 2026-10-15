@@ -510,6 +510,7 @@ def stop_startup(kind, message):
 def database_failure_message(error, db_url):
     """The kind of failure that stopped the asset database from opening, and how to fix it."""
     from sqlalchemy.engine import make_url
+    from sqlalchemy.exc import OperationalError
     from app.database.db import classify_db_url
     kind_of_url = classify_db_url(db_url) if db_url else None
     if kind_of_url is None:
@@ -523,13 +524,29 @@ def database_failure_message(error, db_url):
     if kind_of_url in ("memory", "file"):
         location = get_db_path() or db_url
     else:
-        location = f"{parsed.get_backend_name()} database at {parsed.host}:{parsed.port}/{parsed.database}"
+        # Host and port are what an operator needs to diagnose; the database name
+        # is not, and the whole URL carries the password, so never echo it.
+        location = f"{parsed.get_backend_name()} database at {parsed.host}:{parsed.port}"
     kind = error_kind(error)
     detail = getattr(error, "orig", None) or error
+    # A server database that cannot be reached (down, unreachable, wrong host) is a
+    # distinct failure from a damaged local file: telling the operator to delete it
+    # would be actively wrong. Keyed on the backend plus a connection-class error,
+    # so the SQLite-only branches below are unaffected.
+    server_unreachable = (
+        kind_of_url == "server"
+        and isinstance(error, OperationalError)
+        and not isinstance(error, (FileExistsError, NotADirectoryError))
+    )
     if "Could not acquire lock on database" in str(error):
         failure = "in_use"
         what = f"Another ComfyUI is already using this database: '{location}'."
         fix = "Close the other ComfyUI and start this one again."
+    elif server_unreachable:
+        failure = "server_unreachable"
+        what = f"ComfyUI can't reach the asset database '{location}' ({detail})."
+        fix = ("Check that the database server is running and reachable from this machine, "
+               "and that the --database-url host, port, and credentials are correct.")
     elif kind in ("database_locked", "file_locked"):
         failure = "locked"
         what = f"The asset database '{location}' is locked by another program ({detail})."

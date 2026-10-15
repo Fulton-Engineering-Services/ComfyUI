@@ -56,6 +56,17 @@ def test_lock_holder_db_path_is_none_for_a_server_backend(monkeypatch):
     assert db_module.lock_holder_db_path() is None
 
 
+@pytest.mark.parametrize(
+    "url",
+    ["sqlite:relative.db", "sqlite://user:secret@host/x.db", "mysql://u:p@h/x", ""],
+)
+def test_lock_holder_db_path_never_raises_on_an_unusable_url(monkeypatch, url):
+    # The probe runs even when assets are off (main.warn_if_database_in_use), so a
+    # malformed URL must not escape as an unhandled exception — it must return None.
+    monkeypatch.setattr(db_module.args, "database_url", url)
+    assert db_module.lock_holder_db_path() is None
+
+
 def test_lock_holder_db_path_still_finds_a_held_sqlite_lock(monkeypatch, tmp_path):
     from filelock import FileLock
 

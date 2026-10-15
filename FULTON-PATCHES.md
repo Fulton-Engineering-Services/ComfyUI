@@ -39,7 +39,7 @@ behaviour are unchanged. Only the non-SQLite path is new.
 | `app/assets/database/models.py` + `alembic_db/versions/0007_record_content_split.py` | Partial unique index only via `sqlite_where=text("is_missing = 0")` | Adds `postgresql_where=text("is_missing = false")`. **Upstream bug:** SQLAlchemy silently ignores `sqlite_where` on other dialects, so on Postgres the index degraded to a plain unique index on `path`, forbidding the retired-content (many-rows-per-path) model |
 | `alembic_db/versions/0005_allow_case_sensitive_tags.py` | Passed the already-rendered constraint name to `op.drop_constraint`/`op.create_check_constraint` | `op.f(...)` marks the name final; without it Alembic re-applies the `ck_%(table_name)s_%(constraint_name)s` convention and looks for `ck_tags_ck_tags_ck_tags_lowercase`. **Upstream bug:** the non-SQLite branch was never exercised |
 | `alembic_db/versions/0009_created_at_from_mtime.py` | Used SQLite-only `julianday()` | Dialect-aware "within one second": `julianday(...)` on SQLite, `EXTRACT(EPOCH FROM (...))` on Postgres. **Upstream bug** |
-| `requirements.txt` | No Postgres driver | Adds `psycopg[binary]==3.3.6` (psycopg3; `cp312` aarch64 wheel exists for the GB10 image) |
+| `requirements.txt` | No Postgres driver | Adds `psycopg[binary]==3.3.6` (psycopg3). The aarch64 wheel is `cp312-manylinux_2_27/2_28_aarch64` (glibc ≥ 2.27); the GB10 runtime base is Ubuntu 24.04 (glibc 2.39), so it installs. Check the glibc floor if the base image ever moves below 2.27 |
 | `app/assets/services/ingest.py:_discard_unreferenced_content` docstring | Claimed the SAVEPOINT insert survives rollback (pysqlite-only) | Comment corrected: real SAVEPOINT on Postgres, so no leak there; cleanup kept as harmless best-effort for both dialects |
 
 `app/assets/database/queries/records.py:is_live_path_conflict()` already had a
@@ -61,14 +61,18 @@ are the cleanest standalone PRs.
 
 - `tests-unit/app_test/test_server_backend_urls.py` — torch-free unit tests for
   `classify_db_url()`, `get_db_path()` and the lock-holder behaviour across URL forms.
-  Run everywhere; no database needed.
+  Run everywhere; no database needed. Includes the regression that
+  `lock_holder_db_path()` never raises on an unusable URL (it runs even with assets
+  off, so a malformed URL must not escape as an unhandled `ArgumentError`).
 - `tests-unit/test_postgres_backend.py` — integration tests against a real PostgreSQL
   (skipped unless `ASSETS_TEST_POSTGRES_URL` is set): migrations to head, round-trip,
   the partial unique index predicate, live-vs-retired path semantics, and four
   processes migrating + writing concurrently from a cold schema.
 - `tests-unit/app_test/test_db_startup_failures.py` — updated the URL-gate case: the
   malformed-sqlite/mysql URLs still assert rejection (with password masking); the
-  postgres URL is no longer rejected and was moved out. This file imports `main`, so
+  postgres URL is no longer rejected and was moved out. Adds a case that an
+  unreachable PostgreSQL reports `server_unreachable` (a connectivity fix), never the
+  local-file "delete it" advice, with no URL/password echo. This file imports `main`, so
   it runs **in-image** (it needs the full runtime import graph: torch, transformers,
   comfy_aimdo, …); the changed gate branch was verified out-of-image by driving the
   extracted `database_failure_message` against the real `classify_db_url`/`get_db_path`
