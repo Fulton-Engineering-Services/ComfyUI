@@ -65,7 +65,13 @@ are the cleanest standalone PRs.
   processes migrating + writing concurrently from a cold schema.
 - `tests-unit/app_test/test_db_startup_failures.py` — updated the URL-gate case: the
   malformed-sqlite/mysql URLs still assert rejection (with password masking); the
-  postgres URL is no longer rejected and was moved out.
+  postgres URL is no longer rejected and was moved out. This file imports `main`, so
+  it runs **in-image** (it needs the full runtime import graph: torch, transformers,
+  comfy_aimdo, …); the changed gate branch was verified out-of-image by driving the
+  extracted `database_failure_message` against the real `classify_db_url`/`get_db_path`
+  — `sqlite:relative.db`, `sqlite://user@host/x.db`, `mysql://…` and `''` reject, while
+  `postgresql://…` and a missing `sqlite:///…` file are accepted, all with the URL and
+  its password masked.
 
 ```sh
 # unit (no database needed)
