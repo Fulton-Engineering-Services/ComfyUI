@@ -28,7 +28,7 @@ from app.assets.database.queries.records import (
     create_record,
     mark_content_missing,
 )
-from app.assets.helpers import normalize_tags, to_stored_hash
+from app.assets.helpers import mtime_ns_to_utc, normalize_tags, to_stored_hash
 from app.assets.services.file_utils import get_mtime_ns, get_size_and_mtime_ns
 from app.assets.services.lookup import (
     claim_qualified_content,
@@ -763,6 +763,8 @@ def register_cached_output(
             name, path_tags = get_name_and_tags_from_asset_path(locator)
             mime_type = mimetypes.guess_type(locator, strict=False)[0]
 
+            stat_result = os.stat(locator, follow_symlinks=True)
+
             sibling = session.scalars(
                 select(Asset)
                 .where(Asset.content_id == existing.id)
@@ -788,6 +790,7 @@ def register_cached_output(
                     loader_path=compute_loader_path(locator),
                     tags=path_tags,
                     system_metadata=system_metadata,
+                    created_at=mtime_ns_to_utc(get_mtime_ns(stat_result), stat_result.st_ctime_ns),
                 )
                 sibling_preview_id = _live_sibling_preview_id(session, existing.id)
                 if sibling_preview_id is not None:
@@ -853,6 +856,7 @@ def register_executed_output(
                     loader_path=compute_loader_path(locator),
                     tags=path_tags,
                     system_metadata=system_metadata,
+                    created_at=mtime_ns_to_utc(mtime_ns, stat_result.st_ctime_ns),
                 )
                 if preview is not None:
                     _link_output_preview(session, record, preview)
