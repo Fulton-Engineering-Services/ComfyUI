@@ -1,3 +1,4 @@
+import contextlib
 import importlib
 import logging
 import os
@@ -23,7 +24,7 @@ try:
     from alembic.script import ScriptDirectory
     from sqlalchemy import create_engine, event
     from sqlalchemy.engine import URL, make_url
-    from sqlalchemy.exc import OperationalError
+    from sqlalchemy.exc import ArgumentError, OperationalError
     from sqlalchemy.orm import sessionmaker
     from sqlalchemy.pool import StaticPool
 
@@ -98,8 +99,12 @@ def get_db_path():
     url = get_database_url()
     if url.startswith("sqlite:///"):
         return make_url(url).database
-    else:
-        raise ValueError(f"Unsupported database URL '{url}'.")
+    if _is_memory_db(url):
+        return None
+    parsed = make_url(url)
+    if parsed.get_backend_name() == "sqlite":
+        return parsed.database
+    return None  # Server backends (e.g. postgresql) have no filesystem path.
 
 
 def copy_legacy_default_db(db_path):
@@ -203,7 +208,13 @@ def lock_holder_db_path():
     """
     try:
         db_path = get_db_path()
-    except ValueError:
+    except (ValueError, ArgumentError):
+        # A malformed URL (e.g. "sqlite:relative.db") makes make_url raise
+        # ArgumentError, and an unsupported one raises ValueError. This probe is
+        # advisory and runs even when assets are off, so neither may escape.
+        return None
+    if db_path is None:
+        # Server-backed database: there is no file and no lock file.
         return None
     lock_path = db_path + ".lock"
     if not os.path.exists(lock_path):
@@ -225,13 +236,41 @@ def _is_memory_db(db_url):
     return db_url in ("sqlite:///:memory:", "sqlite://")
 
 
+def classify_db_url(db_url):
+    """Classify a database URL as "memory", "file", "server", or None (unsupported).
+
+    The single source of truth for which URLs the assets system accepts, shared by
+    init_db() and the startup failure message so the two cannot disagree. Only the
+    three-slash SQLite file form ("sqlite:///path") is file-backed; a SQLite URL
+    carrying a host ("sqlite://user@host/x.db") is not a valid file URL and is
+    rejected, as before. Server backends are everything SQLAlchemy resolves to
+    postgresql.
+    """
+    if _is_memory_db(db_url):
+        return "memory"
+    if db_url.startswith("sqlite:///"):
+        return "file"
+    try:
+        backend = make_url(db_url).get_backend_name()
+    except Exception:
+        return None
+    if backend == "postgresql":
+        return "server"
+    return None
+
+
 def init_db():
     db_url = get_database_url()
 
-    if _is_memory_db(db_url):
+    kind = classify_db_url(db_url)
+    if kind == "memory":
         _init_memory_db(db_url)
-    else:
+    elif kind == "file":
         _init_file_db(db_url)
+    elif kind == "server":
+        _init_server_db(db_url)
+    else:
+        raise ValueError(f"Unsupported database URL '{db_url}'.")
 
 
 def _init_memory_db(db_url):
@@ -258,6 +297,78 @@ def _init_memory_db(db_url):
     global Session, WriteSession
     Session = sessionmaker(bind=engine)
     WriteSession = Session
+
+
+def _init_server_db(db_url):
+    """Initialize a server-backed database (e.g. PostgreSQL) using Alembic migrations.
+
+    Mirrors the SQLite file flow's two-engine split (a read engine and a write engine,
+    so create_write_session() keeps working) but with no file lock, no SQLite PRAGMAs
+    and no BEGIN IMMEDIATE: a server database handles its own concurrency and locks,
+    which is what makes it usable by several ComfyUI instances at once.
+    """
+    config = get_alembic_config()
+
+    # Postgres default isolation (READ COMMITTED) is sufficient here: the upsert
+    # paths are guarded by the partial unique index and handle IntegrityError by
+    # re-selecting the winner, so they do not need a stronger snapshot.
+    engine = create_engine(db_url)
+    write_engine = create_engine(db_url)
+
+    # Serialize the migration across instances. Every fleet instance points at the
+    # same database and may start at once; without serialization they race on
+    # alembic_version (concurrent CREATE TABLE / INSERT), which fails all but one.
+    # A Postgres session-level advisory lock, held for the inspection + upgrade,
+    # lets one instance migrate while the others wait, then no-op. The lock is
+    # released automatically if the connection drops. Runtime concurrency needs no
+    # such lock: MVCC plus the IntegrityError handling in records.py covers it.
+    conn = engine.connect()
+    use_advisory_lock = engine.dialect.name == "postgresql"
+    locked = False
+    try:
+        if use_advisory_lock:
+            conn.exec_driver_sql("SELECT pg_advisory_lock(%s)", (_MIGRATION_ADVISORY_LOCK_KEY,))
+            locked = True
+
+        context = MigrationContext.configure(conn)
+        current_rev = context.get_current_revision()
+        script = ScriptDirectory.from_config(config)
+        target_rev = script.get_current_head()
+
+        if target_rev is None:
+            logging.warning("No target revision found.")
+        elif current_rev != target_rev:
+            # No file to back up; server deployments take their own backups. The
+            # destructive-revision warning still applies, so keep emitting it.
+            try:
+                command.upgrade(config, target_rev)
+                logging.info(f"Database upgraded from {current_rev} to {target_rev}")
+            except Exception as e:
+                logging.debug("Error upgrading database", exc_info=True)
+                raise e
+
+            if _upgrade_discards_the_catalog(script, target_rev, current_rev):
+                log_startup_warning(
+                    f"The asset catalog was rebuilt from scratch by migration "
+                    f"{_DESTRUCTIVE_REVISION}: manual tags, user metadata, previews, renames, "
+                    f"API-created records and job_id links from the previous database were "
+                    f"discarded. Record deletions were also discarded, so files still on disk "
+                    f"will be catalogued again."
+                )
+    finally:
+        if locked:
+            # Best-effort: if the connection already died, the server released the
+            # session lock on its own and the unlock would only mask the real error.
+            try:
+                conn.exec_driver_sql("SELECT pg_advisory_unlock(%s)", (_MIGRATION_ADVISORY_LOCK_KEY,))
+            except Exception:
+                logging.debug("Could not release the migration advisory lock", exc_info=True)
+        with contextlib.suppress(Exception):
+            conn.close()
+
+    global Session, WriteSession
+    Session = sessionmaker(bind=engine)
+    WriteSession = sessionmaker(bind=write_engine)
 
 
 def _init_file_db(db_url):
@@ -288,6 +399,10 @@ def _set_wal_synchronous(dbapi_connection, connection_record=None):
 
 
 _DESTRUCTIVE_REVISION = "0007_record_content_split"
+
+# Arbitrary but fixed application-level key for the Postgres session advisory lock
+# that serializes Alembic migrations across fleet instances (see _init_server_db).
+_MIGRATION_ADVISORY_LOCK_KEY = 0x434F4D4659  # "COMFY"
 
 
 def _upgrade_discards_the_catalog(script, target_rev, current_rev):

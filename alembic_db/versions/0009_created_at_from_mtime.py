@@ -21,10 +21,17 @@ def upgrade() -> None:
     # The scanner writes a jobless record in the same transaction as its content; a record
     # added to existing content later (a re-upload, from-hash) is not the scan's, and uploads,
     # which also create both together, carry the "uploaded" tag.
+    # "Within one second" is expressed per dialect: julianday() exists only in SQLite;
+    # Postgres subtracts timestamps and casts the interval to seconds.
+    within_one_second = (
+        "abs(julianday(a.created_at) - julianday(c.created_at)) * 86400 < 1"
+        if op.get_bind().dialect.name == "sqlite"
+        else "abs(EXTRACT(EPOCH FROM (a.created_at - c.created_at))) < 1"
+    )
     rows = op.get_bind().execute(sa.text(
         "SELECT a.id, a.created_at, c.mtime_ns FROM assets AS a JOIN asset_contents AS c"
         " ON c.id = a.content_id WHERE a.job_id IS NULL AND c.mtime_ns IS NOT NULL"
-        " AND abs(julianday(a.created_at) - julianday(c.created_at)) * 86400 < 1"
+        f" AND {within_one_second}"
         " AND NOT EXISTS (SELECT 1 FROM asset_tags AS t WHERE t.asset_id = a.id AND t.tag_name = 'uploaded')"
     ).columns(created_at=sa.DateTime)).all()
     # Only ever earlier: an mtime changed after cataloguing must not move a record above newer work.
