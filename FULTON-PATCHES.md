@@ -21,7 +21,7 @@ unblock exactly that, and are written to be **upstream-PR candidates**.
   mistyped ref fails the build rather than shipping a different core. Re-verify the
   fork branch's ancestry of the new `COMFYUI_REF` in the fork checkout at bump time
   (see `agents/fulton-comfyui/DEPLOYMENT.md`, "Build").
-- Current base: upstream **v0.42.5**, commit `483dae4326356b81de05d27aca3f433dd323cc25`.
+- Current base: upstream **v0.46.0**, commit `a277b5bf213e8a44fa34817b7770b54f86ef4cea`.
 
 ## Root cause → patch map
 
