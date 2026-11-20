@@ -65,6 +65,10 @@ class AssetContent(Base):
             "path",
             unique=True,
             sqlite_where=text("is_missing = 0"),
+            # SQLAlchemy ignores sqlite_where on other dialects, so a bare
+            # partial index would silently degrade to a plain unique index on
+            # Postgres, where is_missing is a BOOLEAN.
+            postgresql_where=text("is_missing = false"),
         ),
     )
 

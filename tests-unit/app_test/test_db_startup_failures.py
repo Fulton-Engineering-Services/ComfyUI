@@ -213,14 +213,15 @@ def test_failure_after_the_database_opened_doesnt_suggest_deleting_it(db_path, c
 
 
 @pytest.mark.parametrize(
-    "url", ["postgresql://user:secret@localhost/comfy", "sqlite:relative.db", "sqlite://user:secret@host/x.db"]
+    "url", ["sqlite:relative.db", "sqlite://user:secret@host/x.db", "mysql://user:secret@host/x"]
 )
 def test_database_url_that_is_not_sqlite_file_url(monkeypatch, db_path, caplog, url):
     monkeypatch.setattr(db_module.args, "database_url", url)
 
     error = _startup_error(caplog, kind="unsupported_url", level=logging.DEBUG)
 
-    assert "--database-url must start with sqlite:///, like sqlite:///path/to/comfyui.db" in error
+    assert "--database-url must be a sqlite:// URL, like sqlite:///path/to/comfyui.db" in error
+    assert "or a postgresql:// URL" in error
     assert "or be left out to use the default database" in error
     assert url not in error
     assert "secret" not in caplog.text
@@ -254,6 +255,22 @@ def test_no_second_database_suggested_for_a_broken_one(tmp_path, monkeypatch, db
     error = _startup_error(caplog, kind="corrupt")
 
     assert "comfyui-2.db" not in error
+
+
+def test_unreachable_server_database_does_not_advise_deleting_it(monkeypatch, caplog):
+    # A PostgreSQL URL pointing at a closed port: the failure must be reported as a
+    # connectivity problem, never as a damaged-local-file "delete it" case, and the
+    # message must not echo the URL (which carries the password).
+    url = "postgresql+psycopg://user:secret@127.0.0.1:59999/comfy"
+    monkeypatch.setattr(db_module.args, "database_url", url)
+
+    error = _startup_error(caplog, kind="server_unreachable")
+
+    assert "can't reach the asset database" in error
+    assert "Check that the database server is running and reachable" in error
+    assert "delete it" not in error
+    assert "secret" not in error
+    assert url not in error
 
 
 def test_opens_from_an_install_folder_with_a_percent_sign(tmp_path, monkeypatch, db_path):
